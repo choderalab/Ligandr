@@ -1,10 +1,16 @@
 """
 NameToSMILES.py
-Set up systems to superpose ligands on different conformations
+Converts a PDB alphanumeric code to a Canonical Isomeric SMILES 
+string with explicit hydrogens at a certain pH
 
-Handles the primary functions
 """
 
+
+def getSMILE(chemName):
+    return ""
+
+def addH(smile_string, pH=7.0):
+    return ""
 
 def canvas(with_attribution=True):
     """
@@ -28,7 +34,3 @@ def canvas(with_attribution=True):
         quote += "\n\t- Adapted from Henry David Thoreau"
     return quote
 
-
-if __name__ == "__main__":
-    # Do something if this file is invoked on its own
-    print(canvas())
