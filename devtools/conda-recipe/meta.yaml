@@ -1,0 +1,27 @@
+package:
+  name: Ligandr
+  version: "0.0.0"
+
+source:
+  path: ../..
+
+build:
+  number: 0
+
+requirements:
+  build:
+    - python
+    - setuptools
+
+  run:
+    - python
+
+test:
+  requires:
+    - pytest
+  imports:
+    - Ligandr
+
+about:
+  home: add_url_here
+  license: LGPLv3 License
