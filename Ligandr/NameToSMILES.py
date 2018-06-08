@@ -28,34 +28,28 @@ def getSMILE(chemName):
     return smiles
 
 def addH(smile_string, pH=7.0):
+    """
+    Protonates a SMILES string for a given pH
+
+    Parameters
+    ------------
+    smile_string : str, required
+        The SMILES format string of a chemical
+    
+    pH : double, optional default = 7.0
+        The pH at which protonation should occur
+    
+    Returns
+    --------
+    protonated_smiles : str
+        The SMILES string representing the protonated ligand
+    """
     mol = openbabel.OBMol()
     converter = openbabel.OBConversion()
-    converter.SetInAndOutFormats("CAN", "CAN")
+    converter.SetInAndOutFormats("CAN", "CAN")      #Necessary for writing and reading strings
     converter.ReadString(mol,smile_string)
     mol.CorrectForPH(pH)
     mol.AddHydrogens()
-    print(mol.NumAtoms())
-    return ""
-
-def canvas(with_attribution=True):
-    """
-    Placeholder function to show example docstring (NumPy format)
-
-    Replace this function and doc string for your own project
-
-    Parameters
-    ----------
-    with_attribution : bool, Optional, default: True
-        Set whether or not to display who the quote is from
-
-    Returns
-    -------
-    quote : str
-        Compiled string including quote and optional attribution
-    """
-
-    quote = "The code is but a canvas to our imagination."
-    if with_attribution:
-        quote += "\n\t- Adapted from Henry David Thoreau"
-    return quote
-
+    converter.AddOption("h")      #Explicitly add hydrogens
+    protonated_smiles = converter.WriteString(mol) 
+    return protonated_smiles
