@@ -5,11 +5,36 @@ string with explicit hydrogens at a certain pH
 
 """
 
+import pypdb
+import openbabel
+
 
 def getSMILE(chemName):
-    return ""
+    """
+    Finds the SMILES from a 3 or 4 letter code of a chemical located in the PDB
+    
+    Parameters
+    ----------
+    chemName : str, required
+        The string representing a chemical in the PDB database
+
+    Returns
+    --------
+    smiles : str
+        SMILES representation of chemical 
+    """
+    chem_detail = pypdb.describe_chemical(chemName)
+    smiles = chem_detail["describeHet"]["ligandInfo"]["ligand"]["smiles"]
+    return smiles
 
 def addH(smile_string, pH=7.0):
+    mol = openbabel.OBMol()
+    converter = openbabel.OBConversion()
+    converter.SetInAndOutFormats("CAN", "CAN")
+    converter.ReadString(mol,smile_string)
+    mol.CorrectForPH(pH)
+    mol.AddHydrogens()
+    print(mol.NumAtoms())
     return ""
 
 def canvas(with_attribution=True):
