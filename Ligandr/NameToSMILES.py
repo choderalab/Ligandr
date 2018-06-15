@@ -1,12 +1,14 @@
 """
 NameToSMILES.py
 Converts a PDB alphanumeric code to a Canonical Isomeric SMILES 
-string with explicit hydrogens at a certain pH
+string with explicit hydrogens at pH 7.4
 
 """
 
 import pypdb
-import openbabel
+from openeye import oechem, oequacpac
+from rdkit import Chem
+
 
 
 def getSMILE(chemName):
@@ -27,29 +29,24 @@ def getSMILE(chemName):
     smiles = chem_detail["describeHet"]["ligandInfo"]["ligand"]["smiles"]
     return smiles
 
-def addH(smile_string, pH=7.0):
+
+def addH(smile_string):
     """
-    Protonates a SMILES string for a given pH
+    Protonates a SMILES string for a pH at 7.4
 
     Parameters
     ------------
     smile_string : str, required
         The SMILES format string of a chemical
-    
-    pH : double, optional default = 7.0
-        The pH at which protonation should occur
-    
     Returns
     --------
     protonated_smiles : str
         The SMILES string representing the protonated ligand
     """
-    mol = openbabel.OBMol()
-    converter = openbabel.OBConversion()
-    converter.SetInAndOutFormats("CAN", "CAN")      #Necessary for writing and reading strings
-    converter.ReadString(mol,smile_string)
-    mol.CorrectForPH(pH)
-    mol.AddHydrogens()
-    converter.AddOption("h")      #Explicitly add hydrogens
-    protonated_smiles = converter.WriteString(mol) 
+    ligand = oechem.OEGraphMol()
+    oechem.OESmilesToMol(ligand, smile_string)
+    oequacpac.OESetNeutralpHModel(ligand)
+    non_protonated = oechem.OECreateIsoSmiString(ligand)
+    ligand_ph = Chem.MolFromSmiles(non_protonated)
+    protonated_smiles = Chem.MolToSmiles(ligand_ph, allHsExplicit=True)
     return protonated_smiles

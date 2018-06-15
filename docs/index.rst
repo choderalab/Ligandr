@@ -10,6 +10,16 @@ Welcome to Ligandr's documentation!
    :maxdepth: 2
    :caption: Contents:
 
+Modules
+-------
+
+.. toctree::
+:maxdepth: 2
+
+.. automodule:: NameToSMILES
+
+
+
 
 
 Indices and tables

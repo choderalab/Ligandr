@@ -12,9 +12,10 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
-# import os
-# import sys
-# sys.path.insert(0, os.path.abspath('.'))
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath('../Ligandr'))
 
 
 # -- Project information -----------------------------------------------------
@@ -42,6 +43,10 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.mathjax',
 ]
+autosummary_generate = True
+autodoc_default_flags = ['members', 'inherited-members']
+# Disable NumPy style attributes/methods expecting every method to have its own docs page
+numpydoc_class_members_toctree = False
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

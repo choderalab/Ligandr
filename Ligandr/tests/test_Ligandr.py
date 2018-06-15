@@ -6,6 +6,8 @@ Unit and regression test for the Ligandr package.
 import Ligandr
 import pytest
 import sys
+from Ligandr import NameToSMILES
+
 
 def test_Ligandr_imported():
     """Sample test, will always pass so long as import statement worked"""
