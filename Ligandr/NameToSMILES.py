@@ -1,34 +1,55 @@
 """
 NameToSMILES.py
-Set up systems to superpose ligands on different conformations
+Converts a PDB alphanumeric code to a Canonical Isomeric SMILES 
+string with explicit hydrogens at a certain pH
 
-Handles the primary functions
 """
 
+import pypdb
+import openbabel
 
-def canvas(with_attribution=True):
+
+def getSMILE(chemName):
     """
-    Placeholder function to show example docstring (NumPy format)
-
-    Replace this function and doc string for your own project
-
+    Finds the SMILES from a 3 or 4 letter code of a chemical located in the PDB
+    
     Parameters
     ----------
-    with_attribution : bool, Optional, default: True
-        Set whether or not to display who the quote is from
+    chemName : str, required
+        The string representing a chemical in the PDB database
 
     Returns
-    -------
-    quote : str
-        Compiled string including quote and optional attribution
+    --------
+    smiles : str
+        SMILES representation of chemical 
     """
+    chem_detail = pypdb.describe_chemical(chemName)
+    smiles = chem_detail["describeHet"]["ligandInfo"]["ligand"]["smiles"]
+    return smiles
 
-    quote = "The code is but a canvas to our imagination."
-    if with_attribution:
-        quote += "\n\t- Adapted from Henry David Thoreau"
-    return quote
+def addH(smile_string, pH=7.0):
+    """
+    Protonates a SMILES string for a given pH
 
-
-if __name__ == "__main__":
-    # Do something if this file is invoked on its own
-    print(canvas())
+    Parameters
+    ------------
+    smile_string : str, required
+        The SMILES format string of a chemical
+    
+    pH : double, optional default = 7.0
+        The pH at which protonation should occur
+    
+    Returns
+    --------
+    protonated_smiles : str
+        The SMILES string representing the protonated ligand
+    """
+    mol = openbabel.OBMol()
+    converter = openbabel.OBConversion()
+    converter.SetInAndOutFormats("CAN", "CAN")      #Necessary for writing and reading strings
+    converter.ReadString(mol,smile_string)
+    mol.CorrectForPH(pH)
+    mol.AddHydrogens()
+    converter.AddOption("h")      #Explicitly add hydrogens
+    protonated_smiles = converter.WriteString(mol) 
+    return protonated_smiles
