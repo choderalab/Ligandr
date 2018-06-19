@@ -5,10 +5,8 @@ string with explicit hydrogens at pH 7.4
 
 """
 
-import pypdb
 from openeye import oechem, oequacpac
-from rdkit import Chem
-
+import requests
 
 
 def getSMILE(chemName):
@@ -25,9 +23,13 @@ def getSMILE(chemName):
     smiles : str
         SMILES representation of chemical 
     """
-    chem_detail = pypdb.describe_chemical(chemName)
-    smiles = chem_detail["describeHet"]["ligandInfo"]["ligand"]["smiles"]
-    return smiles
+    url_string = "https://www.rcsb.org/ligand/" + chemName
+    response = requests.get(url_string)
+    long_string = response.content.decode()
+    containing_string = long_string[long_string.find("Isomeric SMILES"): long_string.find("InChI")]
+    suffixed_string = containing_string[54:]
+    smiles_string = suffixed_string[:suffixed_string.find("<")]
+    return smiles_string
 
 
 def addH(smile_string):
@@ -46,7 +48,5 @@ def addH(smile_string):
     ligand = oechem.OEGraphMol()
     oechem.OESmilesToMol(ligand, smile_string)
     oequacpac.OESetNeutralpHModel(ligand)
-    non_protonated = oechem.OECreateIsoSmiString(ligand)
-    ligand_ph = Chem.MolFromSmiles(non_protonated)
-    protonated_smiles = Chem.MolToSmiles(ligand_ph, allHsExplicit=True)
-    return protonated_smiles
+    non_protonated = oechem.OEMolToSmiles(ligand)
+    return non_protonated
