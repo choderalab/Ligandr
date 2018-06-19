@@ -10,6 +10,7 @@ import NameToSMILES
 
 import mdtraj
 import numpy as np
+from mdtraj import Trajectory
 from openeye import oechem, oedocking, oeomega, oeff
 from openeye.oechem import OEMol, OEGraphMol
 import itertools
@@ -31,16 +32,10 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
         one residue or no residue is selected, program will throw an index error
     """
     # Produces pdb file in memory
-    pdb_dummy = tempfile.NamedTemporaryFile(suffix=".pdb")
-    overall_dry_frame = trajectory_frame.remove_solvent(exclude=keep_ions)
-    overall_dry_frame.save(pdb_dummy.name)
+    overall_dry_frame = trajectory_frame.remove_solvent(exclude=keep_ions)  # type: mdtraj.Trajectory
+    complex_prot = _trajectory_to_oemol(overall_dry_frame)
 
-    # Read pdb to openeye
-    complex_prot = oechem.OEGraphMol()
-    ins = oechem.oemolistream()
-    ins.open(pdb_dummy.name)
-    oechem.OEReadMolecule(ins, complex_prot)
-    pdb_dummy.close()
+    # Bookkeeping
     ligand_stream = []
     output = []
     i = 0
@@ -68,14 +63,9 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
         oedocking.OEMakeReceptor(receptor, complex_prot, x, y, z)
 
         # Write out and open ligand in OpenEye
-        ligand_dummy = tempfile.NamedTemporaryFile(suffix=".pdb")
-        ligand_traj.save(ligand_dummy.name)
-        lig_initial = oechem.OEGraphMol()
-        ins.open(ligand_dummy.name)
-        oechem.OEReadMolecule(ins, lig_initial)
-        oechem.OEAddExplicitHydrogens(lig_initial)
+        lig_initial = _trajectory_to_oemol(ligand_traj)
         lig_initial.SetTitle(ligand_traj.top.residue(0).name)
-        ligand_dummy.close()
+
 
         # Validate if ligand is correct by checking against SMILES
         lig_smiles = NameToSMILES.getSMILE(ligand_traj.top.residue(0).name)
@@ -85,7 +75,8 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
         oechem.OESmilesToMol(validation_ligand, neutral_ph_smiles)
         if oechem.OEMolToSmiles(validation_ligand) != oechem.OEMolToSmiles(lig_initial):
             ligand_posed = __docking_internal(receptor, lig_initial, validation_ligand)
-            complex_prot = __eraseLigand(receptor, ligand_traj.top.residue(0).name)
+            complex_prot = _trajectory_to_oemol(
+                overall_dry_frame.atom_slice(overall_dry_frame.top.select("not ( %s )" % ligand)))
             oechem.OEAddMols(receptor, ligand_posed)
             print("reset")
 
@@ -105,24 +96,21 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
             ligand_position.append(docked_ligand)
             j = j + 1
         ligand_stream.append(ligand_position)
-        complex_prot = __eraseLigand(complex_prot, ligand_traj.top.residue(0).name)
+        overall_dry_frame.atom_slice(overall_dry_frame.top.select("not ( %s )" % ligand), inplace=True)
         i = i + 1
     # Produce output trajectories for all combos of ligands
-    output_dummy = tempfile.NamedTemporaryFile(suffix=".pdb")
-    outputter = oechem.oemolostream(output_dummy.name)
-    oechem.OEWriteMolecule(outputter, complex_prot)
     for ligand_combo in itertools.product(*ligand_stream):
-        new_frame_prot = mdtraj.load(output_dummy.name)
+        new_frame_prot = overall_dry_frame  # type: Trajectory
         for built_ligand in ligand_combo:
             # Rename ligand
             ligand_dummy = tempfile.NamedTemporaryFile(suffix=".pdb")
             outputter_lig = oechem.oemolostream(ligand_dummy.name)
             oechem.OEWriteMolecule(outputter_lig, built_ligand)
             ligand_final_traj = mdtraj.load(ligand_dummy.name)
+            ligand_dummy.close()
             for residue in ligand_final_traj.top.residues:
-                if residue.name == 'UNL':
-                    residue.name = built_ligand.GetTitle()
-                    print(residue.name)
+                residue.name = built_ligand.GetTitle()
+                print(residue.name)
             new_frame_prot = new_frame_prot.stack(ligand_final_traj)
         output.append(new_frame_prot)
     print(output)
@@ -140,7 +128,7 @@ def __docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraph
 
     # Create multiple conformations
     omegaOpts = oeomega.OEOmegaOptions()
-    omegaOpts.SetMaxConfs(100)
+    omegaOpts.SetMaxConfs(1000)
     omega_driver = oeomega.OEOmega(omegaOpts)
     conformer_docking = oechem.OEMol()  # type: OEMol
     print(oechem.OESmilesToMol(conformer_docking, NameToSMILES.addH(oechem.OEMolToSmiles(docking_ligand))))
@@ -150,7 +138,7 @@ def __docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraph
         smiles = NameToSMILES.addH(oechem.OEMolToSmiles(docking_ligand))
         print(smiles)
         subprocess.run("obabel -:'%s' -O %s --gen3d; obabel %s -O %s --confab --conf = 100" % (
-        smiles, single_sdf.name, single_sdf.name, double_sdf.name), shell=True)
+            smiles, single_sdf.name, single_sdf.name, double_sdf.name), shell=True)
         ins = oechem.oemolistream()
         ins.SetConfTest(oechem.OEOmegaConfTest())
         ins.open(double_sdf.name)
@@ -165,8 +153,14 @@ def __docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraph
     return posed_ligand
 
 
-def __eraseLigand(complex, ligandCode):
-    for atom in complex.GetAtoms():
-        if oechem.OEAtomGetResidue(atom).GetName() == ligandCode:
-            complex.DeleteAtom(atom)
-    return complex
+def _trajectory_to_oemol(trajectory):
+    dummy_file = tempfile.NamedTemporaryFile(suffix=".pdb")
+    trajectory.save(dummy_file.name)
+    mol = oechem.OEGraphMol()
+    ins = oechem.oemolistream()
+    ins.open(dummy_file.name)
+    oechem.OEReadMolecule(ins, mol)
+    if not mol.NumAtoms() >= 1:
+        raise AssertionError("Error reading in molecule")
+    dummy_file.close()
+    return mol
