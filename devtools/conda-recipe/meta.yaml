@@ -12,6 +12,9 @@ requirements:
   build:
     - python
     - setuptools
+    - openeye
+    - mdtraj
+    - numpy
 
   run:
     - python

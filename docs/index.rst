@@ -17,6 +17,11 @@ Modules
 :maxdepth: 2
 
 .. automodule:: NameToSMILES
+:members:
+
+.. automodule:: LigOverlay
+:members:
+       :special-members:
 
 
 
