@@ -158,6 +158,7 @@ def place_ligand(posed_target: mdtraj.Trajectory, reference: mdtraj.Trajectory,
     steric_clash = []
     for index, frame in enumerate(distances):
         min_distance = numpy.amin(frame)
+        # Change nm to angstroms
         if min_distance * 10 <= threshold:
             steric_clash.append((index, min_distance * 10))  # Convert to angstroms
     print(steric_clash)
