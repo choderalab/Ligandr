@@ -6,8 +6,14 @@ import mdtraj
 from Bio import pairwise2
 import numpy
 from typing import Dict, Tuple, List, Union
-import itertools
 from copy import deepcopy
+import tempfile
+from simtk import openmm, unit
+from simtk.openmm import app
+
+import openmmtools
+from openmmtools import integrators, states, mcmc
+from openmmtools.alchemy import AbsoluteAlchemicalFactory, AlchemicalRegion, AlchemicalState
 
 
 def align_structs(target_trajectory: mdtraj.Trajectory, reference_structure: mdtraj.Trajectory,
@@ -149,17 +155,178 @@ def place_ligand(posed_target: mdtraj.Trajectory, reference: mdtraj.Trajectory,
             reference = reference.join(dummy_reference)
     ligand_added_target = posed_target.stack(reference.atom_slice(reference.top.select(ligand_code)))
 
-    # Find steric clashes
-    ligand_residues = [residue.index for residue in ligand_added_target.atom_slice(
-        ligand_added_target.top.select(ligand_code)).top.residues]  # Find the residue of the ligand
-    other_residues = [residue.index for residue in posed_target.top.residues]
-    pairs = list(itertools.product(other_residues, ligand_residues))
-    distances = mdtraj.compute_contacts(ligand_added_target, pairs, scheme='closest', ignore_nonprotein=False)[0]
-    steric_clash = []
-    for index, frame in enumerate(distances):
-        min_distance = numpy.amin(frame)
-        # Change nm to angstroms
-        if min_distance * 10 <= threshold:
-            steric_clash.append((index, min_distance * 10))  # Convert to angstroms
-    print(steric_clash)
-    return ligand_added_target, steric_clash
+    return ligand_added_target
+
+
+def shrake_rupley_fractions(traj: mdtraj.Trajectory, ligand: str) -> numpy.array:
+    """
+
+    Parameters
+    ----------
+    traj: mdtraj.Trajectory, required
+        The trajectory to measure the accessible area
+    ligand: str, required
+        A selection string specifying which ligand to measure accessible area for
+
+    Returns
+    -------
+    numpy.array
+        The total fraction of accessible area
+    """
+    just_ligand = traj.atom_slice(traj.top.select(ligand))  # type: mdtraj.Trajectory
+    # Residue indexing gets messed up so save off
+    traj_lig_dummy = tempfile.NamedTemporaryFile(suffix=".h5")
+    just_ligand.save(traj_lig_dummy.name)
+    just_ligand = mdtraj.load(traj_lig_dummy.name)
+    traj_lig_dummy.close()
+
+    # Calc shrake rupely
+    ligand_surface = mdtraj.shrake_rupley(just_ligand, probe_radius=0, mode='residue')
+    traj_surface_lig = mdtraj.shrake_rupley(traj, probe_radius=0, mode='residue')[:, -1]
+    ligand_surface_frac = []
+    for i in range(len(ligand_surface)):
+        val = traj_surface_lig[i] / ligand_surface[i]
+        ligand_surface_frac.append(val)
+
+    ligand_surface_frac = numpy.asarray(ligand_surface_frac)
+    return ligand_surface_frac
+
+
+# Following code is heavily based off of JDC's iapetus
+
+
+def alchemy_minimization(trajectory: mdtraj.Trajectory, ligand: str, forcefield_loader: List[str] = None) -> Union(
+    mdtraj.Trajectory, List[List[float]]):
+    """
+
+    Parameters
+    ----------
+    trajectory: mdtraj.Trajectory, required
+        The trajectory to minimize
+    ligand: str, required
+        An mdtraj selection string that represents the area where to lower potential energy interactivity
+    forcefield_loader: List[str], optional, default = None
+        Various forcefields that can be loaded
+
+    Returns
+    -------
+    mdtraj.Trajectory
+        A trajectory where every frame has been minimized
+    List[List[float]]
+        A list composed of floats representing the energy at the following lambdas pre and post minimization: (0,0), (0.1,0)
+        as well as at 1,1
+
+    """
+
+    # Bookkeeping
+    output_traj = trajectory[0]
+    total_energy = []
+
+    # Create system
+    topology_main = trajectory.top.to_openmm()
+    forcefield = app.ForceField('amber99sbildn.xml', 'tip3p.xml')
+
+    for field in forcefield_loader:
+        forcefield.loadFile(field)
+    system = forcefield.createSystem(topology_main, nonbondedMethod=app.NoCutoff, rigidWater=True,
+                                     ewaldErrorTolerance=0.0005)
+
+    # Do something with LJ potentials
+    for force in system.getForces():
+        if force.__class__.__name__ == 'NonbondedForce':
+            for index in range(system.getNumParticles()):
+                [charge, sigma, epsilon] = force.getParticleParameters(index)
+                if sigma / unit.nanometers == 0.0:
+                    force.setParticleParameters(index, charge, 1.0 * unit.angstroms, epsilon)
+
+    # Get alchemical system
+    alchemy_system = _soften_ligand(trajectory.top.select(ligand), system)
+    alchemical_state = AlchemicalState.from_system(alchemy_system)  # type: AlchemicalState
+    thermo_state = states.ThermodynamicState(alchemy_system, temperature=300.0 * unit.kelvin)
+    alchem_thermo_state = states.CompoundThermodynamicState(thermo_state, [alchemical_state])
+
+    n_annealing_steps = 1000
+    integrator = openmm.LangevinIntegrator(300 * unit.kelvin, 1.0 / unit.picoseconds, 1.0 * unit.femtoseconds)
+    context, integrator = openmmtools.cache.global_context_cache.get_context(alchem_thermo_state,
+                                                                             integrator)  # type: (openmm.Context, openmm.Integrator)
+    # Run dynamics
+    for frame in trajectory:
+        energy = []
+        sampler_state = states.SamplerState(positions=frame.xyz[0])
+        sampler_state.apply_to_context(context)
+
+        # Each of these steps calculate and store energy
+        alchemical_state.lambda_sterics = 0.0
+        alchemical_state.lambda_electrostatics = 0.0
+        alchemical_state.apply_to_context(context)
+        state_test = context.getState(getPositions=True, getEnergy=True)
+        energy.append(state_test.getPotentialEnergy()._value)
+
+        alchemical_state.lambda_sterics = 0.1
+        alchemical_state.lambda_electrostatics = 0.0
+        alchemical_state.apply_to_context(context)
+        state_test = context.getState(getPositions=True, getEnergy=True)
+        energy.append(state_test.getPotentialEnergy()._value)
+
+        for step in range(n_annealing_steps):
+            alchemical_state.lambda_sterics = float(step) / float(n_annealing_steps)
+            alchemical_state.lambda_electrostatics = 0.0
+            alchemical_state.apply_to_context(context)
+            integrator.step(1)
+        for step in range(n_annealing_steps):
+            alchemical_state.lambda_sterics = 1.0
+            alchemical_state.lambda_electrostatics = float(step) / float(n_annealing_steps)
+            alchemical_state.apply_to_context(context)
+            integrator.step(1)
+        sampler_state.update_from_context(context)
+
+        alchemical_state.lambda_sterics = 0.0
+        alchemical_state.lambda_electrostatics = 0.0
+        alchemical_state.apply_to_context(context)
+        state_test = context.getState(getPositions=True, getEnergy=True)
+        energy.append(state_test.getPotentialEnergy()._value)
+
+        alchemical_state.lambda_sterics = 0.1
+        alchemical_state.lambda_electrostatics = 0.0
+        alchemical_state.apply_to_context(context)
+        state_test = context.getState(getPositions=True, getEnergy=True)
+        energy.append(state_test.getPotentialEnergy()._value)
+
+        alchemical_state.lambda_sterics = 1.0
+        alchemical_state.lambda_electrostatics = 1.0
+        alchemical_state.apply_to_context(context)
+        state_test = context.getState(getPositions=True, getEnergy=True)
+        energy.append(state_test.getPotentialEnergy()._value)
+
+        # Generate ouput frame
+        positions = state_test.getPositions()
+        fixed_positions = []
+        fixed_positions.append([[coord._value for coord in xyz] for xyz in positions])
+        traj_out = mdtraj.Trajectory(fixed_positions, topology=frame.top, unitcell_lengths=frame.unitcell_lengths[0],
+                                     unitcell_angles=frame.unitcell_angles[0])
+        output_traj = output_traj.join(traj_out)
+        total_energy.append(energy)
+
+    return output_traj[1:], total_energy
+
+
+def _soften_ligand(ligand_index: List[int], reference_system: openmm.System) -> openmm.System:
+    """
+
+    Parameters
+    ----------
+    ligand_index: List[int], required
+        The indecies of the atoms to soften
+    reference_system: openmm.System, required
+        The system that the ligand is part of
+
+    Returns
+    -------
+    openmm.System
+        A system ready for alchemical changes
+
+    """
+    factory = AbsoluteAlchemicalFactory(consistent_exceptions=False, disable_alchemical_dispersion_correction=True)
+    alchemical_region = AlchemicalRegion(alchemical_atoms=ligand_index)
+    alchemical_system = factory.create_alchemical_system(reference_system, alchemical_region)
+    return alchemical_system
