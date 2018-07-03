@@ -1,12 +1,12 @@
 """
 NameToSMILES.py
 Converts a PDB alphanumeric code to a Canonical Isomeric SMILES 
-string with explicit hydrogens at a certain pH
+string with explicit hydrogens at pH 7.4
 
 """
 
-import pypdb
-import openbabel
+from openeye import oechem, oequacpac
+import requests
 
 
 def getSMILE(chemName):
@@ -23,33 +23,30 @@ def getSMILE(chemName):
     smiles : str
         SMILES representation of chemical 
     """
-    chem_detail = pypdb.describe_chemical(chemName)
-    smiles = chem_detail["describeHet"]["ligandInfo"]["ligand"]["smiles"]
-    return smiles
+    url_string = "https://www.rcsb.org/ligand/" + chemName
+    response = requests.get(url_string)
+    long_string = response.content.decode()
+    containing_string = long_string[long_string.find("Isomeric SMILES"): long_string.find("InChI")]
+    suffixed_string = containing_string[54:]
+    smiles_string = suffixed_string[:suffixed_string.find("<")]
+    return smiles_string
 
-def addH(smile_string, pH=7.0):
+
+def addH(smile_string):
     """
-    Protonates a SMILES string for a given pH
+    Protonates a SMILES string for a pH at 7.4
 
     Parameters
     ------------
     smile_string : str, required
         The SMILES format string of a chemical
-    
-    pH : double, optional default = 7.0
-        The pH at which protonation should occur
-    
     Returns
     --------
     protonated_smiles : str
         The SMILES string representing the protonated ligand
     """
-    mol = openbabel.OBMol()
-    converter = openbabel.OBConversion()
-    converter.SetInAndOutFormats("CAN", "CAN")      #Necessary for writing and reading strings
-    converter.ReadString(mol,smile_string)
-    mol.CorrectForPH(pH)
-    mol.AddHydrogens()
-    converter.AddOption("h")      #Explicitly add hydrogens
-    protonated_smiles = converter.WriteString(mol) 
-    return protonated_smiles
+    ligand = oechem.OEGraphMol()
+    oechem.OESmilesToMol(ligand, smile_string)
+    oequacpac.OESetNeutralpHModel(ligand)
+    non_protonated = oechem.OEMolToSmiles(ligand)
+    return non_protonated
