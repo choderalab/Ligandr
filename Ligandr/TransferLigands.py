@@ -181,7 +181,7 @@ def shrake_rupley_fractions(traj: mdtraj.Trajectory, ligand: str) -> numpy.array
     traj_lig_dummy.close()
 
     # Calc shrake rupely
-    ligand_surface = mdtraj.shrake_rupley(just_ligand, probe_radius=0, mode='residue')
+    ligand_surface = mdtraj.shrake_rupley(just_ligand, probe_radius=0, mode='residue')[:, 0]
     traj_surface_lig = mdtraj.shrake_rupley(traj, probe_radius=0, mode='residue')[:, -1]
     ligand_surface_frac = []
     for i in range(len(ligand_surface)):
@@ -195,7 +195,8 @@ def shrake_rupley_fractions(traj: mdtraj.Trajectory, ligand: str) -> numpy.array
 # Following code is heavily based off of JDC's iapetus
 
 
-def alchemy_minimization(trajectory: mdtraj.Trajectory, ligand: str, forcefield_loader: List[str] = None) -> Union(
+def alchemy_minimization(trajectory: mdtraj.Trajectory, ligand: str, forcefield_loader: List[str] = None,
+                         step=1) -> Union(
     mdtraj.Trajectory, List[List[float]]):
     """
 
@@ -223,6 +224,7 @@ def alchemy_minimization(trajectory: mdtraj.Trajectory, ligand: str, forcefield_
     total_energy = []
 
     # Create system
+    trajectory = trajectory[::step]
     topology_main = trajectory.top.to_openmm()
     forcefield = app.ForceField('amber99sbildn.xml', 'tip3p.xml')
 

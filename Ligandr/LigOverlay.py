@@ -54,7 +54,7 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
         raise ValueError("Original and new ligand arrays must have the same length.")
     # Produces pdb file in memory
     overall_dry_frame = trajectory_frame.remove_solvent(exclude=keep_ions)  # type: mdtraj.Trajectory
-    complex_prot = __trajectory_to_oemol__(overall_dry_frame)
+    complex_prot = _trajectory_to_oemol_(overall_dry_frame)
 
     # Bookkeeping
     ligand_stream = []
@@ -84,7 +84,7 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
         oedocking.OEMakeReceptor(receptor, complex_prot, x, y, z)
 
         # Write out and open ligand in OpenEye
-        lig_initial = __trajectory_to_oemol__(ligand_traj)
+        lig_initial = _trajectory_to_oemol_(ligand_traj)
         lig_initial.SetTitle(ligand_traj.top.residue(0).name)
 
         # Validate if ligand is correct by checking against SMILES
@@ -97,7 +97,7 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
             if (oechem.OEMolToSmiles(validation_ligand) != oechem.OEMolToSmiles(
                     lig_initial)) and not override_replacement:
                 ligand_posed = _docking_internal(receptor, lig_initial, validation_ligand)
-                complex_prot = __trajectory_to_oemol__(
+                complex_prot = _trajectory_to_oemol_(
                     overall_dry_frame.atom_slice(overall_dry_frame.top.select("not ( %s )" % ligand)))
                 oechem.OEAddMols(receptor, ligand_posed)
                 print(
@@ -189,7 +189,7 @@ def _docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphM
     return posed_ligand
 
 
-def __trajectory_to_oemol__(trajectory):
+def _trajectory_to_oemol_(trajectory):
     """
     Converts an mdtrajectory into an openeye molecule
 
