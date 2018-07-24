@@ -52,5 +52,5 @@ def addH(smile_string):
         print('Error parsing SMILES string')
         return
     oequacpac.OESetNeutralpHModel(ligand)
-    non_protonated = oechem.OEMolToSmiles(ligand)
-    return non_protonated
+    protonated = oechem.OEMolToSmiles(ligand)
+    return protonated
