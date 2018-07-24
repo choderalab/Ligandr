@@ -72,7 +72,7 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
         if ligand_traj.n_residues > 1:
             raise IndexError("More than one ligand residue found. Only one expected")
         # Find approximate location of binding pocket
-        ligand_center = np.average(ligand_traj.xyz[0], axis=0) * 10
+        ligand_center = np.average(ligand_traj.xyz[0], axis=0) * 10  # Convert from nm to angstrom
 
         # Explicit value necessary for generated methods
         x = float(ligand_center[0])
@@ -87,7 +87,6 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
         lig_initial = __trajectory_to_oemol__(ligand_traj)
         lig_initial.SetTitle(ligand_traj.top.residue(0).name)
 
-
         # Validate if ligand is correct by checking against SMILES
         lig_smiles = NameToSMILES.getSMILE(ligand_traj.top.residue(0).name)
         if lig_smiles is not None:
@@ -97,7 +96,7 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
             oechem.OESmilesToMol(validation_ligand, neutral_ph_smiles)
             if (oechem.OEMolToSmiles(validation_ligand) != oechem.OEMolToSmiles(
                     lig_initial)) and not override_replacement:
-                ligand_posed = __docking_internal(receptor, lig_initial, validation_ligand)
+                ligand_posed = _docking_internal(receptor, lig_initial, validation_ligand)
                 complex_prot = __trajectory_to_oemol__(
                     overall_dry_frame.atom_slice(overall_dry_frame.top.select("not ( %s )" % ligand)))
                 oechem.OEAddMols(receptor, ligand_posed)
@@ -106,7 +105,6 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
 
             else:
                 ligand_posed = lig_initial
-                print("stable")
         else:
             print("ligand not found in PDB: No validation and continuing")
         # Dock new ligands
@@ -116,7 +114,7 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
             new_structure = oechem.OEGraphMol()
             oechem.OESmilesToMol(new_structure, new_ligand)
             new_structure.SetTitle("ligand replacement")
-            docked_ligand = __docking_internal(receptor, ligand_posed, new_structure)
+            docked_ligand = _docking_internal(receptor, ligand_posed, new_structure)
             docked_ligand.SetTitle(title_list[i][j])
             ligand_position.append(docked_ligand)
             j = j + 1
@@ -141,7 +139,7 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
     return output
 
 
-def __docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphMol, docking_ligand: oechem.OEGraphMol):
+def _docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphMol, docking_ligand: oechem.OEGraphMol):
     """
     Internal method for docking to a receptor given a bound ligand and ligand to dock to
 
@@ -158,7 +156,7 @@ def __docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraph
 
     Returns
     -------
-    A oechem molecules with coordinates of its docking
+    An oechem molecule with coordinates of its docking
 
     """
     # Create posit config

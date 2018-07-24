@@ -26,6 +26,8 @@ def getSMILE(chemName):
     url_string = "https://www.rcsb.org/ligand/" + chemName
     response = requests.get(url_string)
     long_string = response.content.decode()
+    if long_string.find("Isomeric SMILES") == -1:
+        return None
     containing_string = long_string[long_string.find("Isomeric SMILES"): long_string.find("InChI")]
     suffixed_string = containing_string[54:]
     smiles_string = suffixed_string[:suffixed_string.find("<")]
@@ -46,7 +48,9 @@ def addH(smile_string):
         The SMILES string representing the protonated ligand
     """
     ligand = oechem.OEGraphMol()
-    oechem.OESmilesToMol(ligand, smile_string)
+    if not oechem.OESmilesToMol(ligand, smile_string):
+        print('Error parsing SMILES string')
+        return
     oequacpac.OESetNeutralpHModel(ligand)
     non_protonated = oechem.OEMolToSmiles(ligand)
     return non_protonated
