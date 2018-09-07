@@ -126,7 +126,7 @@ def _find_alignment(fasta_seq1: str, fasta_seq2: str) -> Union[List[int], List[i
 
 
 def place_ligand(posed_target: mdtraj.Trajectory, reference: mdtraj.Trajectory,
-                 ligand_code="not protein and not water", threshold=2.0) -> Union[
+                 ligand_code="not protein and not water") -> Union[
     mdtraj.Trajectory, List[Tuple[int, int]]]:
     """
     Places a ligand and checks for steric clashes
@@ -196,8 +196,7 @@ def shrake_rupley_fractions(traj: mdtraj.Trajectory, ligand: str) -> numpy.array
 
 
 def alchemy_minimization(trajectory: mdtraj.Trajectory, ligand: str, forcefield_loader: List[str] = None,
-                         step=1) -> Union(
-    mdtraj.Trajectory, List[List[float]]):
+                         step=1):
     """
 
     Parameters
@@ -257,12 +256,14 @@ def alchemy_minimization(trajectory: mdtraj.Trajectory, ligand: str, forcefield_
         sampler_state = states.SamplerState(positions=frame.xyz[0])
         sampler_state.apply_to_context(context)
 
+
         # Each of these steps calculate and store energy
         alchemical_state.lambda_sterics = 0.0
         alchemical_state.lambda_electrostatics = 0.0
         alchemical_state.apply_to_context(context)
         state_test = context.getState(getPositions=True, getEnergy=True)
         energy.append(state_test.getPotentialEnergy()._value)
+        openmm.LocalEnergyMinimizer.minimize(context, tolerance=10 * unit.kilojoule / unit.mole, maxIterations=1000)
 
         alchemical_state.lambda_sterics = 0.1
         alchemical_state.lambda_electrostatics = 0.0
@@ -304,8 +305,12 @@ def alchemy_minimization(trajectory: mdtraj.Trajectory, ligand: str, forcefield_
         positions = state_test.getPositions()
         fixed_positions = []
         fixed_positions.append([[coord._value for coord in xyz] for xyz in positions])
-        traj_out = mdtraj.Trajectory(fixed_positions, topology=frame.top, unitcell_lengths=frame.unitcell_lengths[0],
+        if frame.unitcell_lengths:
+            traj_out = mdtraj.Trajectory(fixed_positions, topology=frame.top,
+                                         unitcell_lengths=frame.unitcell_lengths[0],
                                      unitcell_angles=frame.unitcell_angles[0])
+        else:
+            traj_out = mdtraj.Trajectory(fixed_positions, topology=frame.top)
         output_traj = output_traj.join(traj_out)
         total_energy.append(energy)
 

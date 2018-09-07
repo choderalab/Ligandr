@@ -11,14 +11,17 @@ import NameToSMILES
 import mdtraj
 import numpy as np
 from mdtraj import Trajectory
-from openeye import oechem, oedocking, oeomega, oeff
+from openeye import oechem, oedocking, oeomega
 from openeye.oechem import OEMol, OEGraphMol
 import itertools
 import subprocess
+import parmed
+from io import StringIO
+import os.path
 
 
 def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, keep_ions=None,
-                  override_replacement=False) -> List[
+                  override_replacement=False, gen_xml=False, location="./") -> List[
     mdtraj.Trajectory]:
     """
     Docks ligands or a list of ligands in place of another ligand
@@ -44,6 +47,12 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
     override_replacement: bool, optional, default:False
         Setting to true will prevent replacing ligand with canonical molecule from PDB.
 
+    gen_xml: bool, optional, default:False
+        Setting to true runs the generate xml subroutine and saves openmm forcefield compatible XMLs in location. WARNING:
+        Using this option requires antechmaber and is time-consuming
+
+    location: str, optional, default:None
+        The location to save xml files. Default is current directory
     Returns
     -------
     output: [mdtraj.Trajectory]
@@ -69,8 +78,6 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
             print("Exception: %s" % str(e), file=sys.stderr)
             traceback.print_tb(e.__traceback__, file=sys.stderr)
             sys.exit(1)
-        if ligand_traj.n_residues > 1:
-            raise IndexError("More than one ligand residue found. Only one expected")
         # Find approximate location of binding pocket
         ligand_center = np.average(ligand_traj.xyz[0], axis=0) * 10  # Convert from nm to angstrom
 
@@ -114,7 +121,8 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
             new_structure = oechem.OEGraphMol()
             oechem.OESmilesToMol(new_structure, new_ligand)
             new_structure.SetTitle("ligand replacement")
-            docked_ligand = _docking_internal(receptor, ligand_posed, new_structure)
+            print(title_list[i][j])
+            docked_ligand = _docking_internal(receptor, ligand_posed, new_ligand)
             docked_ligand.SetTitle(title_list[i][j])
             ligand_position.append(docked_ligand)
             j = j + 1
@@ -133,13 +141,32 @@ def dock_molecule(trajectory_frame, original_ligands, new_ligands, title_list, k
             ligand_dummy.close()
             for residue in ligand_final_traj.top.residues:
                 residue.name = built_ligand.GetTitle()
+            ligand_named = tempfile.NamedTemporaryFile(suffix=".pdb")
+            ligand_final_traj.save(ligand_named.name)
+            if gen_xml:
+                if not os.path.isfile(location + built_ligand.GetTitle() + ".xml"):
+                    generate_xml(ligand_named.name, location, oechem.OENetCharge(built_ligand), built_ligand.GetTitle())
+                else:
+                    print(built_ligand.GetTitle() + ".xml already exists")
             new_frame_prot = new_frame_prot.stack(ligand_final_traj)
         output.append(new_frame_prot)
     print("End")
     return output
 
 
-def _docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphMol, docking_ligand: oechem.OEGraphMol):
+def generate_xml(ligand_pdb, location, charge, title="UNK"):
+    file_stub = location + title
+    subprocess.run("antechamber -i %s -fi pdb -o %s.mol2 -fo mol2 -c bcc -nc %s" % (ligand_pdb, file_stub, charge),
+                   shell=True)
+    subprocess.run("parmchk2 -i %s.mol2 -f mol2 -o %s.frcmod" % (file_stub, file_stub), shell=True)
+    params_mol = parmed.amber.AmberParameterSet.from_leaprc(
+        StringIO(u'SAM = loadMol2 %s.mol2\nloadAmberParams %s.frcmod' % (file_stub, file_stub)))
+    params_sam = parmed.openmm.OpenMMParameterSet.from_parameterset(params_mol)
+    params_sam.write('%s.xml' % file_stub)
+    print("Forcefield generation of %s complete" % title)
+
+
+def _docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphMol, ligand_string):
     """
     Internal method for docking to a receptor given a bound ligand and ligand to dock to
 
@@ -161,7 +188,7 @@ def _docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphM
     """
     # Create posit config
     oedocking.OEReceptorSetBoundLigand(receptor, bound_ligand)
-    poser = oedocking.OEPosit()
+    poser = oedocking.OEHybrid(oedocking.OEDockMethod_Hybrid2, oedocking.OESearchResolution_High)
     poser.Initialize(receptor)
 
     # Create multiple conformations
@@ -169,10 +196,14 @@ def _docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphM
     omegaOpts.SetMaxConfs(1000)
     omega_driver = oeomega.OEOmega(omegaOpts)
     conformer_docking = oechem.OEMol()  # type: OEMol
+    oechem.OESmilesToMol(conformer_docking, ligand_string)
+    oechem.OEAddExplicitHydrogens(conformer_docking)
+    print(conformer_docking.NumAtoms())
+
     if not omega_driver(conformer_docking):
         single_sdf = tempfile.NamedTemporaryFile(suffix=".sdf")
         double_sdf = tempfile.NamedTemporaryFile(suffix=".sdf")
-        smiles = NameToSMILES.addH(oechem.OEMolToSmiles(docking_ligand))
+        smiles = ligand_string
         subprocess.run("obabel -:'%s' -O %s --gen3d; obabel %s -O %s --confab --conf = 100" % (
             smiles, single_sdf.name, single_sdf.name, double_sdf.name), shell=True)
         ins = oechem.oemolistream()
@@ -180,9 +211,6 @@ def _docking_internal(receptor: oechem.OEGraphMol, bound_ligand: oechem.OEGraphM
         ins.open(double_sdf.name)
         oechem.OEReadMolecule(ins, conformer_docking)
 
-    # Failed conformer generation
-    if conformer_docking.NumConfs() <= 1:
-        raise TypeError('Conformer generation failed. Only %s conformer(s) present' % conformer_docking.NumConfs())
     # Dock and get top conformer
     posed_ligand = oechem.OEGraphMol()  # type: OEGraphMol
     poser.DockMultiConformerMolecule(posed_ligand, conformer_docking)
